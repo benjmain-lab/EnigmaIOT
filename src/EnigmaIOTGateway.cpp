@@ -757,7 +757,10 @@ void EnigmaIOTGatewayClass::begin(Comms_halClass* comm, char* networkName, uint8
 	comm->onDataRcvd (rx_cb);
 	comm->onDataSent (tx_cb);
 
+#if ENABLE_REST_API
+	DEBUG_INFO ("GW API started");
 	GwAPI.begin ();
+#endif
 	
 }
 
@@ -804,18 +807,19 @@ void EnigmaIOTGatewayClass::begin (Comms_halClass* comm, uint8_t* networkKey, bo
 		} else {
 			DEBUG_INFO ("Configuration loaded from flash");
 		}
+	}
 
-		initWiFi (gwConfig.channel, gwConfig.networkName, plainNetKey, COMM_GATEWAY);
-		comm->begin (NULL, gwConfig.channel, COMM_GATEWAY);
-		comm->onDataRcvd (rx_cb);
-		comm->onDataSent (tx_cb);
+	initWiFi (gwConfig.channel, gwConfig.networkName, plainNetKey, COMM_GATEWAY);
+	comm->begin (NULL, gwConfig.channel, COMM_GATEWAY);
+	comm->onDataRcvd (rx_cb);
+	comm->onDataSent (tx_cb);
 
 #if ENABLE_REST_API
-        DEBUG_INFO ("GW API started");
-		GwAPI.begin ();
+	DEBUG_INFO ("GW API started");
+	GwAPI.begin ();
 #endif
-	}
 }
+
 
 bool EnigmaIOTGatewayClass::addInputMsgQueue (const uint8_t* addr, const uint8_t* msg, size_t len) {
 	msg_queue_item_t message;
@@ -986,6 +990,8 @@ void EnigmaIOTGatewayClass::manageMessage (const uint8_t* mac, uint8_t* buf, uin
 		if (espNowError == 0) {
 			if (processClientHello (mac, buf, count, node)) {
 				if (serverHello (myPublicKey, node)) {
+					DEBUG_DBG("Delay after server Hello FOR 1500ms");
+					delay(1500);
 					DEBUG_INFO ("Server Hello sent");
 					node->setStatus (REGISTERED);
 					node->setKeyValidFrom (millis ());

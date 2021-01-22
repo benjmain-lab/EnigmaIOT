@@ -732,7 +732,6 @@ void EnigmaIOTNodeClass::begin (Comms_halClass* comm, const char* networkName, u
 			rtcmem_data.commErrors = 0;
 	}
 
-	// TODO: Here Channel may not be present. So it is risky to call initWifi without a known channel
 	initWiFi (rtcmem_data.channel, rtcmem_data.networkName);
 	comm->begin (rtcmem_data.gateway, rtcmem_data.channel);
 	comm->onDataRcvd (rx_cb);
