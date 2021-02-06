@@ -34,6 +34,10 @@ static const bool DISCONNECT_ON_DATA_ERROR = true; ///< @brief Activates node in
 #define ENABLE_REST_API 1 ///< Set to 1 to enable REST API
 #endif // ENABLE_REST_API
 
+#ifndef ENABLE_ASYNC_WIFIMANAGER
+#define ENABLE_ASYNC_WIFIMANAGER  1
+#endif
+
 // Node configuration
 static const uint32_t OTA_TIMEOUT_TIME = 10000; ///< @brief Timeout between OTA messages. In milliseconds
 static const int MIN_SYNC_ACCURACY = 5000; ///< @brief If calculated offset absolute value is higher than this value resync is done more often. us units

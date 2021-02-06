@@ -481,6 +481,7 @@ bool EnigmaIOTGatewayClass::sendDownstream (uint8_t* mac, const uint8_t* data, s
 		return false;
 	}
 }
+#if ENABLE_ASYNC_WIFIMANAGER
 
 bool EnigmaIOTGatewayClass::configWiFiManager () {
 	server = new AsyncWebServer (80);
@@ -598,6 +599,7 @@ bool EnigmaIOTGatewayClass::configWiFiManager () {
 
 	return result;
 }
+#endif
 
 void EnigmaIOTGatewayClass::setGwConfigData(uint8_t channel, const char* networkKey, const char* networkName){
 	gwConfig.channel = channel;
@@ -788,6 +790,7 @@ void EnigmaIOTGatewayClass::begin (Comms_halClass* comm, uint8_t* networkKey, bo
 			return;
 		}
 		if (!loadFlashData ()) { // Load from flash
+			#if ENABLE_ASYNC_WIFIMANAGER
 			if (configWiFiManager ()) {
 				if (shouldSave) {
 					DEBUG_DBG ("Got configuration. Storing");
@@ -800,7 +803,9 @@ void EnigmaIOTGatewayClass::begin (Comms_halClass* comm, uint8_t* networkKey, bo
 				} else {
 					DEBUG_INFO ("Configuration has not to be saved");
 				}
-			} else {
+			} else 
+			#endif
+			{
 				DEBUG_ERROR ("Configuration error. Restarting");
 				ESP.restart ();
 			}

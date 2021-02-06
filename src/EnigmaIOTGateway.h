@@ -18,10 +18,12 @@
 #include "NodeList.h"
 #include "Filter.h"
 #include "Comms_hal.h"
+#include <queue>
+#if ENABLE_ASYNC_WIFIMANAGER
 #include <ESPAsyncWebServer.h>
 #include <ESPAsyncWiFiManager.h>
 #include <DNSServer.h>
-#include <queue>
+#endif
 #if ENABLE_REST_API
 #include "GatewayAPI.h"
 #endif // ENABLE_REST_API
@@ -85,14 +87,18 @@ enum gwInvalidateReason_t {
 typedef std::function<void (uint8_t* mac, uint8_t* buf, uint8_t len, uint16_t lostMessages, bool control, gatewayPayloadEncoding_t payload_type, char* nodeName)> onGwDataRx_t;
 typedef std::function<void (uint8_t* mac, uint16_t node_id, char* nodeName)> onNewNode_t;
 typedef std::function<void (uint8_t* mac, gwInvalidateReason_t reason)> onNodeDisconnected_t;
+#if ENABLE_ASYNC_WIFIMANAGER
 typedef std::function<void (boolean status)> onWiFiManagerExit_t;
+#endif
 typedef std::function<void (void)> simpleEventHandler_t;
 
 #else
 typedef void (*onGwDataRx_t)(uint8_t* mac, uint8_t* data, uint8_t len, uint16_t lostMessages, bool control, gatewayPayloadEncoding_t payload_type, char* nodeName);
 typedef void (*onNewNode_t)(uint8_t* mac, uint16_t node_id, char* nodeName);
 typedef void (*onNodeDisconnected_t)(uint8_t* mac, gwInvalidateReason_t reason);
+#if ENABLE_ASYNC_WIFIMANAGER
 typedef void (*onWiFiManagerExit_t)(boolean status);
+#endif
 typedef void (*simpleEventHandler_t)(void);
 #endif
 
@@ -246,11 +252,12 @@ protected:
 	msg_queue_item_t tempBuffer; ///< @brief Temporary storage for input message got from buffer
 
 	EnigmaIOTRingBuffer<msg_queue_item_t>* input_queue; ///< @brief Input messages buffer. It acts as a FIFO queue
-
+	#if ENABLE_ASYNC_WIFIMANAGER
 	AsyncWebServer* server; ///< @brief WebServer that holds configuration portal
 	DNSServer* dns; ///< @brief DNS server used by configuration portal
 	AsyncWiFiManager* wifiManager; ///< @brief Wifi configuration portal
 	onWiFiManagerExit_t notifyWiFiManagerExit; ///< @brief Function called when configuration portal exits
+	#endif
 	simpleEventHandler_t notifyWiFiManagerStarted; ///< @brief Function called when configuration portal is started
 
 	friend class GatewayAPI;
@@ -454,7 +461,7 @@ public:
 		else
 			return (char*)(gwConfig.networkKey);
 	}
-
+	#if ENABLE_ASYNC_WIFIMANAGER
    /**
 	* @brief Adds a parameter to configuration portal
 	* @param p Configuration parameter
@@ -486,7 +493,8 @@ public:
 	* @return Returns `true` if data was been correctly configured. `false` otherwise
 	*/
 	bool configWiFiManager ();
-
+	#endif
+	
 	/**
 	 * @brief Initalizes communication basic data and starts accepting node registration
 	 * @param comm Physical layer to be used on this network
