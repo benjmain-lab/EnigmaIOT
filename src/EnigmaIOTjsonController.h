@@ -111,6 +111,7 @@ protected:
 	  * @brief Sends a JSON encoded message to lower layer
 	  * @return Returns `true` if message sending was successful. `false` otherwise
 	  */
+#if ARDUINOJSON_VERSION_MAJOR == 6
 	bool sendJson (DynamicJsonDocument& json) {
 		int len = measureMsgPack (json) + 1;
 		uint8_t* buffer = (uint8_t*)malloc (len);
@@ -135,6 +136,12 @@ protected:
 		free (strBuffer);
 		return result;
 	}
+#elif ARDUINOJSON_VERSION_MAJOR == 5
+	bool sendJson (JsonObject& json) {
+		// For now we cant use this function, TODO develop this function
+		return true;
+	}
+#endif
 };
 
 #endif // _ENIGMAIOTJSONCONTROLLER_h

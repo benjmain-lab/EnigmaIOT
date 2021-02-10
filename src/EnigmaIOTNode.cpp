@@ -279,9 +279,19 @@ bool EnigmaIOTNodeClass::loadFlashData () {
 			//size_t size = configFile.size ();
 
 			const size_t capacity = JSON_ARRAY_SIZE (32) + JSON_OBJECT_SIZE (7) + 110;
+			bool json_error = false;
+#if ARDUINOJSON_VERSION_MAJOR == 6
 			DynamicJsonDocument doc (capacity);
 			DeserializationError error = deserializeJson (doc, configFile);
 			if (error) {
+				json_error = true;
+			}
+#elif ARDUINOJSON_VERSION_MAJOR == 5
+			DynamicJsonBuffer jsonBuffer(capacity);
+       		JsonObject& doc = jsonBuffer.parseObject(payload);
+			json_error = !doc.success();
+#endif
+			if (json_error) {
 				DEBUG_ERROR ("Failed to parse file");
 			} else {
 				DEBUG_DBG ("JSON file parsed");
