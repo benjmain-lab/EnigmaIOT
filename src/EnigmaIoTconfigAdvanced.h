@@ -18,7 +18,7 @@
 #include "Arduino.h"
 
 // Global configuration. Physical layer settings
-static const uint8_t MAX_MESSAGE_LENGTH = 250; ///< @brief Maximum payload size on ESP-NOW
+static const uint8_t MAX_MESSAGE_LENGTH = 150; ///< @brief Maximum payload size on ESP-NOW
 static const size_t ENIGMAIOT_ADDR_LEN = 6; ///< @brief Address size. Mac address = 6 bytes
 static const uint8_t NETWORK_NAME_LENGTH = 21; ///< @brief Maximum number of characters of network name
 static const uint8_t NODE_NAME_LENGTH = 33; ///< @brief Maximum number of characters of node name

@@ -114,6 +114,103 @@ typedef struct {
 	size_t len; /**< Message length*/
 } msg_queue_item_t;
 
+
+
+/**
+  * @brief Ring buffer class. Used to implement message buffer - vector based
+  *
+  */
+ #include <vector>
+template <typename Telement>
+class EnigmaIOTRingBufferVector {
+protected:
+	int maxSize; ///< @brief Buffer size
+	// Telement* buffer; ///< @brief Actual buffer
+	std::vector<Telement*> buffer;
+
+public:
+	/**
+	  * @brief Creates a ring buffer to hold `Telement` objects
+	  * @param range Buffer depth
+	  */
+	EnigmaIOTRingBufferVector <Telement> (int range) : maxSize (range) {
+		// buffer = new Telement[maxSize];
+	}
+    
+    /**
+      * @brief EnigmaIOTRingBuffer destructor 
+      * @param range Free up buffer memory
+      */
+    ~EnigmaIOTRingBufferVector () {
+        maxSize = 0;
+        // delete[] (buffer);
+		buffer.clear();
+    }
+
+	/**
+	  * @brief Returns actual number of elements that buffer holds
+	  * @return Returns Actual number of elements that buffer holds
+	  */
+	int size () { return buffer.size(); }
+
+	/**
+	  * @brief Checks if buffer is full
+	  * @return Returns `true`if buffer is full, `false` otherwise
+	  */
+	bool isFull () { return buffer.size() == maxSize; }
+
+	/**
+	  * @brief Checks if buffer is empty
+	  * @return Returns `true`if buffer has no elements stored, `false` otherwise
+	  */
+	bool empty () { return (buffer.size() == 0); }
+
+	/**
+	  * @brief Adds a new item to buffer, deleting older element if it is full
+	  * @param item Element to add to buffer
+	  * @return Returns `false` if buffer was full before inserting the new element, `true` otherwise
+	  */
+	bool push (Telement* item) {
+		//TODO Handle max size
+		Telement message = new Telement;
+
+		message.len = item->len;
+		memcpy (message.data, item->data, item->len);
+		memcpy (message.addr, item->addr, ENIGMAIOT_ADDR_LEN);
+
+		buffer.insert(buffer.end(),&message);
+		return true;
+
+	}
+
+	/**
+	  * @brief Deletes older item from buffer, if buffer is not empty
+	  * @return Returns `false` if buffer was empty before trying to delete element, `true` otherwise
+	  */
+	bool pop () {
+		bool wasEmpty = empty ();
+		if (!wasEmpty)
+		{
+			buffer.erase(buffer.begin());
+		}
+		return !wasEmpty;
+	}
+
+	/**
+	  * @brief Gets a pointer to older item in buffer, if buffer is not empty
+	  * @return Returns pointer to element. If buffer was empty before calling this method it returns `NULL`
+	  */
+	Telement* front () {
+		if (!empty ()) {
+			return *buffer.begin();
+		} else {
+			return NULL;
+		}
+	}
+};
+
+
+
 /**
   * @brief Ring buffer class. Used to implement message buffer
   *
@@ -126,7 +223,10 @@ protected:
 	int readIndex = 0; ///< @brief Pointer to next item to be read
 	int writeIndex = 0; ///< @brief Pointer to next position to write onto
 	Telement* buffer; ///< @brief Actual buffer
-
+	Telement* overflowBuffer;
+	uint8_t MAX_OVERFLOW_BUFFER_SIZE = 15;
+	uint8_t overflow_index = MAX_OVERFLOW_BUFFER_SIZE + 1;
+	bool deleteOverflow = false;
 public:
 	/**
 	  * @brief Creates a ring buffer to hold `Telement` objects
@@ -137,7 +237,7 @@ public:
 	}
     
     /**
-      * @brief EnigmaIOTRingBuffer destructor 
+      * @brief EnigmaIOTRingBufferOld destructor 
       * @param range Free up buffer memory
       */
     ~EnigmaIOTRingBuffer () {
@@ -170,8 +270,13 @@ public:
 	  */
 	bool push (Telement* item) {
 		bool wasFull = isFull ();
-		DEBUG_DBG ("Add element. Buffer was %s", wasFull ? "full" : "not full");
-		DEBUG_DBG ("Before -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		DEBUG_INFO ("Add element. Buffer was %s", wasFull ? "full" : "not full");
+		DEBUG_INFO ("Before -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		if (wasFull && writeIndex == readIndex)
+		{ //that means this is overwriting, because the buffer was full
+			//lets savee this item in some other buffer
+			pushInOverFlowBuffer();
+		}
 		memcpy (&(buffer[writeIndex]), item, sizeof (Telement));
 		//Serial.printf ("Copied: %d bytes\n", sizeof (Telement));
 		writeIndex++;
@@ -186,7 +291,7 @@ public:
 		} else {
 			numElements++;
 		}
-		DEBUG_DBG ("After -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		DEBUG_INFO ("After -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
 		return !wasFull;
 	}
 
@@ -196,8 +301,8 @@ public:
 	  */
 	bool pop () {
 		bool wasEmpty = empty ();
-		DEBUG_DBG ("Remove element. Buffer was %s", wasEmpty ? "empty" : "not empty");
-		DEBUG_DBG ("Before -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		DEBUG_INFO ("Remove element. Buffer was %s", wasEmpty ? "empty" : "not empty");
+		DEBUG_INFO ("Before -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
 		if (!wasEmpty) {
 			readIndex++;
 			if (readIndex >= maxSize) {
@@ -205,7 +310,7 @@ public:
 			}
 			numElements--;
 		}
-		DEBUG_DBG ("After -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		DEBUG_INFO ("After -- > ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
 		return !wasEmpty;
 	}
 
@@ -214,13 +319,69 @@ public:
 	  * @return Returns pointer to element. If buffer was empty before calling this method it returns `NULL`
 	  */
 	Telement* front () {
-		DEBUG_DBG ("Read element. ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+		DEBUG_INFO ("Read element. ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
 		if (!empty ()) {
 			return &(buffer[readIndex]);
 		} else {
-			return NULL;
+			return frontOverflowBuffer();
 		}
 	}
+
+	void pushInOverFlowBuffer()
+	{
+		shouldDeleteOverflowBuffer();
+		if(overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1)
+		{
+			DEBUG_ERROR ("Overflow initiated");
+			overflowBuffer = new Telement[MAX_OVERFLOW_BUFFER_SIZE];
+			overflow_index = 0;
+		}
+		else if (overflow_index > MAX_OVERFLOW_BUFFER_SIZE - 1)
+		{
+			//Even extra buffer is full, need to check this
+			DEBUG_ERROR ("Overflow Buffer is also full, disacrding message now\n");
+			return;
+		}
+		else
+		{
+			memcpy (&(overflowBuffer[overflow_index++]), &(buffer[writeIndex]), sizeof (Telement));
+		}
+	}
+
+	Telement* frontOverflowBuffer()
+	{
+		if(overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1)
+		{
+			shouldDeleteOverflowBuffer();
+			return NULL;
+		}
+		else
+		{
+			if (overflow_index - 1 == 0) {
+				overflow_index = MAX_OVERFLOW_BUFFER_SIZE + 1;
+				deleteOverflow = true;
+				return &(overflowBuffer[0]);
+			}
+			return &(overflowBuffer[--overflow_index]);
+		}
+	}
+
+	void shouldDeleteOverflowBuffer()
+	{
+		if(deleteOverflow)
+		{
+			DEBUG_ERROR ("Overflow Buffer is deleting nowww");
+			delete[] (overflowBuffer);
+			deleteOverflow = false;
+		}
+	}
+
+	bool empty2()
+	{
+		return overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1;
+	}
+
+	
 };
 
 /**

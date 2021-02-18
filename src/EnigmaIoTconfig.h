@@ -27,7 +27,7 @@ static const unsigned int MAX_NODE_INACTIVITY = 86400000U; ///< @brief After thi
 static const size_t MAX_MQTT_QUEUE_SIZE = 3; ///< @brief Maximum number of MQTT messages to be sent
 #define ENABLE_STATUS_MESSAGES 1 ///< @brief Enable sending status message after every data message
 static const int RATE_AVE_ORDER = 5; ///< @brief Message rate filter order
-static const int MAX_INPUT_QUEUE_SIZE = 3; ///< @brief Input queue size for EnigmaIOT messages. Acts as a buffer to be able to handle messages during high load
+static const int MAX_INPUT_QUEUE_SIZE = 10; ///< @brief Input queue size for EnigmaIOT messages. Acts as a buffer to be able to handle messages during high load
 #ifndef NUM_NODES
 static const int NUM_NODES = 20; ///< @brief Maximum number of nodes that this gateway can handle
 #endif //NUM_NODES

@@ -957,7 +957,7 @@ void EnigmaIOTGatewayClass::handle () {
 
 	// Check input EnigmaIOT message queue
 
-	if (!input_queue->empty ()) {
+	if (!input_queue->empty () || !input_queue->empty2 ()) {
 		msg_queue_item_t* message;
 
 		message = getInputMsgQueue (&tempBuffer);
