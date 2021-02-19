@@ -320,7 +320,8 @@ public:
 	  */
 	Telement* front () {
 		DEBUG_INFO ("Read element. ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
-		if (!empty ()) {
+		shouldDeleteOverflowBuffer();
+		 if (!empty ()) {
 			return &(buffer[readIndex]);
 		} else {
 			return frontOverflowBuffer();
@@ -332,7 +333,7 @@ public:
 		shouldDeleteOverflowBuffer();
 		if(overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1)
 		{
-			DEBUG_ERROR ("Overflow initiated");
+			DEBUG_INFO ("Overflow Buffer initiated");
 			overflowBuffer = new Telement[MAX_OVERFLOW_BUFFER_SIZE];
 			overflow_index = 0;
 		}
@@ -362,6 +363,7 @@ public:
 				deleteOverflow = true;
 				return &(overflowBuffer[0]);
 			}
+			DEBUG_INFO ("Reading from overflow buffer, ob size:%d, main buf size: %d, rdIdx:%d, wrIdx: %d", overflow_index, numElements, readIndex, writeIndex);
 			return &(overflowBuffer[--overflow_index]);
 		}
 	}
@@ -370,7 +372,7 @@ public:
 	{
 		if(deleteOverflow)
 		{
-			DEBUG_ERROR ("Overflow Buffer is deleting nowww");
+			DEBUG_INFO ("Overflow Buffer is deleting now");
 			delete[] (overflowBuffer);
 			deleteOverflow = false;
 		}
@@ -864,4 +866,3 @@ public:
 extern EnigmaIOTGatewayClass EnigmaIOTGateway;
 
 #endif
-
