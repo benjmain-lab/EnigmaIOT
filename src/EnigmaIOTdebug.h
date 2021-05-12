@@ -22,7 +22,7 @@
 #endif
 
 #define NO_DEBUG	0 ///< @brief Debug level that will give no debug output
-#define ERROR	1 ///< @brief Debug level that will give error messages
+#define D_ERROR	1 ///< @brief Debug level that will give error messages
 #define WARN	2 ///< @brief Debug level that will give error and warning messages
 #define INFO	3 ///< @brief Debug level that will give error, warning and info messages
 #define DBG	    4 ///< @brief Debug level that will give error, warning,info AND dbg messages
@@ -60,7 +60,7 @@ const char* extractFileName (const char* path);
 #define DEBUG_WARN(...)
 #endif
 
-#if DEBUG_LEVEL >= ERROR
+#if DEBUG_LEVEL >= D_ERROR
 #define DEBUG_ERROR(text,...) DEBUG_ESP_PORT.print("E ");DEBUG_LINE_PREFIX();DEBUG_ESP_PORT.printf_P(PSTR(text),##__VA_ARGS__);DEBUG_ESP_PORT.println()
 #else
 #define DEBUG_ERROR(...)
