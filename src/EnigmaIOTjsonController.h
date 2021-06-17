@@ -17,18 +17,30 @@
 
 #include <EnigmaIOTNode.h>
 #include <ArduinoJson.h>
+#if SUPPORT_HA_DISCOVERY    
+#include <queue>
+#endif
 
 #if defined ESP8266 || defined ESP32
 #include <functional>
-typedef std::function<bool (const uint8_t* data, size_t len, nodePayloadEncoding_t payloadEncoding)> sendData_cb; /**< Data send callback definition */
+typedef std::function<bool (const uint8_t* data, size_t len, nodePayloadEncoding_t payloadEncoding, dataMessageType_t dataMsgType)> sendData_cb; /**< Data send callback definition */
+#if SUPPORT_HA_DISCOVERY
+typedef std::function<void ()> haDiscovery_call_t; /**< Function called to send HA discovery data */
+#endif // SUPPORT_HA_DISCOVERY
 #else
 #error This code only supports ESP8266 or ESP32 platforms
-#endif
+#endif // defined ESP8266 || defined ESP32
 
 class EnigmaIOTjsonController {
 protected:
 	sendData_cb sendData;
-	EnigmaIOTNodeClass* enigmaIotNode;
+    EnigmaIOTNodeClass* enigmaIotNode;
+#if SUPPORT_HA_DISCOVERY
+    std::queue<haDiscovery_call_t> haCallQueue;
+    bool doSendHAdiscovery = false;
+    clock_t sendHAtime;
+    clock_t sendHAdelay = HA_FIRST_DISCOVERY_DELAY;
+#endif // SUPPORT_HA_DISCOVERY
 
 public:
    /**
@@ -66,7 +78,22 @@ public:
 	/**
 	 * @brief Used to notify controller that it is registered on EnigmaIOT network
 	 */
-	virtual void connectInform ();
+    void connectInform () {
+        DEBUG_INFO ("Connect inform");
+        sendStartAnouncement ();
+#if SUPPORT_HA_DISCOVERY
+        if (enigmaIotNode->getNode ()->getSleepy ()) {
+            sendHAdelay = HA_FIRST_DISCOVERY_DELAY_SLEEPY;
+        }
+        doSendHAdiscovery = true;
+        sendHAtime = millis ();
+#endif // SUPPORT_HA_DISCOVERY
+    }
+
+    /**
+     * @brief Used to notify controller that it is unregistered on EnigmaIOT network
+     */
+    virtual void disconnectInform (nodeInvalidateReason_t reason){}
 
 	/**
 	 * @brief Called when wifi manager starts config portal
@@ -83,8 +110,35 @@ public:
 	 * @brief Loads output module configuration
 	 * @return Returns `true` if load was successful. `false` otherwise
 	 */
-	virtual bool loadConfig () = 0;
+    virtual bool loadConfig () = 0;
 
+#if SUPPORT_HA_DISCOVERY    
+    void callHAdiscoveryCalls () {
+        if (doSendHAdiscovery && millis () - sendHAtime > sendHAdelay) {
+            haDiscovery_call_t hacall = 0;
+            DEBUG_INFO ("Call HA discovery");
+            if (haCallQueue.size ()) {
+                hacall = haCallQueue.front ();
+            }
+            DEBUG_DBG ("haCallQueue size is %d", haCallQueue.size ());
+            if (hacall) {
+                DEBUG_DBG ("Execute hacall");
+                hacall ();
+                haCallQueue.pop ();
+                sendHAtime = millis ();
+                if (enigmaIotNode->getNode ()->getSleepy ()) {
+                    sendHAdelay = HA_NEXT_DISCOVERY_DELAY_SLEEPY;
+                } else {
+                    sendHAdelay = HA_NEXT_DISCOVERY_DELAY;
+                }
+            } else {
+                doSendHAdiscovery = false;
+            }
+            DEBUG_INFO (" Exit call HA discovery");
+        }
+    }
+#endif
+    
 protected:
 
 	/**
@@ -125,16 +179,42 @@ protected:
 		DEBUG_INFO ("Trying to send: %s", strBuffer);
 		bool result = false;
 		if (sendData)
-			result = sendData (buffer, len, MSG_PACK);
+            result = sendData (buffer, len, MSG_PACK, DATA_TYPE);
 		if (!result) {
 			DEBUG_WARN ("---- Error sending data");
 		} else {
 			DEBUG_INFO ("---- Data sent");
-		}
-		free (buffer);
-		free (strBuffer);
+        }
+        if (buffer) {
+            free (buffer);        
+        }
+        if (strBuffer) {
+            free (strBuffer);
+        }
 		return result;
-	}
+    }
+
+#if SUPPORT_HA_DISCOVERY    
+    void addHACall (haDiscovery_call_t HACall) {
+        haCallQueue.push (HACall);
+    }
+
+    bool sendHADiscovery (uint8_t* data, size_t len) {
+        if (!data || !len) {
+            DEBUG_WARN ("Empty HA message");
+            return false;
+        }
+        bool result = false;
+        if (sendData)
+            result = sendData (data, len, MSG_PACK, HA_DISC_TYPE);
+        if (!result) {
+            DEBUG_WARN ("---- Error sending data");
+        } else {
+            DEBUG_INFO ("---- Data sent");
+        }
+        return result;
+    }
+#endif
 };
 
 #endif // _ENIGMAIOTJSONCONTROLLER_h

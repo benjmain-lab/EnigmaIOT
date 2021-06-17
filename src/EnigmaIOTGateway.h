@@ -24,6 +24,8 @@
 #include <ESPAsyncWiFiManager.h>
 #include <DNSServer.h>
 #endif
+#include <queue>
+#include "EnigmaIOTRingBuffer.h"
 #if ENABLE_REST_API
 #include "GatewayAPI.h"
 #endif // ENABLE_REST_API
@@ -47,7 +49,8 @@ enum gatewayMessageType_t {
 	CONTROL_DATA = 0x03, /**< Internal control message from sensor to gateway. Used for OTA, settings configuration, etc */
 	DOWNSTREAM_CTRL_DATA = 0x04, /**< Internal control message from gateway to sensor. Used for OTA, settings configuration, etc */
 	DOWNSTREAM_BRCAST_CTRL_DATA = 0x84, /**< Internal control broadcast message from gateway to sensor. Used for OTA, settings configuration, etc */
-	CLOCK_REQUEST = 0x05, /**< Clock request message from node */
+    HA_DISCOVERY_MESSAGE = 0x08, /**< This sends gateway needed information to build a Home Assistant discovery MQTT message to allow automatic entities provision */
+    CLOCK_REQUEST = 0x05, /**< Clock request message from node */
 	CLOCK_RESPONSE = 0x06, /**< Clock response message from gateway */
 	NODE_NAME_SET = 0x07, /**< Message from node to signal its own custom node name */
 	NODE_NAME_RESULT = 0x17, /**< Message from gateway to get result after set node name */
@@ -85,6 +88,9 @@ enum gwInvalidateReason_t {
 #if defined ARDUINO_ARCH_ESP8266 || defined ARDUINO_ARCH_ESP32
 #include <functional>
 typedef std::function<void (uint8_t* mac, uint8_t* buf, uint8_t len, uint16_t lostMessages, bool control, gatewayPayloadEncoding_t payload_type, char* nodeName)> onGwDataRx_t;
+#if SUPPORT_HA_DISCOVERY
+typedef std::function<void (const char* topic, char *message, size_t len)> onHADiscovery_t;
+#endif
 typedef std::function<void (uint8_t* mac, uint16_t node_id, char* nodeName)> onNewNode_t;
 typedef std::function<void (uint8_t* mac, gwInvalidateReason_t reason)> onNodeDisconnected_t;
 #if ENABLE_ASYNC_WIFIMANAGER
@@ -402,7 +408,10 @@ protected:
 	int8_t rxled = -1; ///< @brief I/O pin to connect a led that flashes when gateway receives data
 	unsigned long txLedOnTime; ///< @brief Flash duration for Tx LED
 	unsigned long rxLedOnTime; ///< @brief Flash duration for Rx LED
-	onGwDataRx_t notifyData; ///< @brief Callback function that will be invoked when data is received fron a node
+    onGwDataRx_t notifyData; ///< @brief Callback function that will be invoked when data is received from a node
+#if SUPPORT_HA_DISCOVERY
+    onHADiscovery_t notifyHADiscovery; ///< @brief Callback function that will be invoked when HomeAssistant discovery message is received from a node
+#endif
 	onNewNode_t notifyNewNode; ///< @brief Callback function that will be invoked when a new node is connected
 	onNodeDisconnected_t notifyNodeDisconnection; ///< @brief Callback function that will be invoked when a node gets disconnected
 	simpleEventHandler_t notifyRestartRequested; ///< @brief Callback function that will be invoked when a hardware restart is requested
@@ -597,8 +606,21 @@ protected:
 	* @brief Saves configuration to flash memory
 	* @return Returns `true` if data could be written successfuly. `false` otherwise
 	*/
-	bool saveFlashData ();
-
+    bool saveFlashData ();
+    
+#if SUPPORT_HA_DISCOVERY
+    /**
+    * @brief Sends a Home Assistant discovery message after receiving it from node
+    * @param address Node physical address
+    * @param data MsgPack input buffer
+    * @param len Input buffer length
+    * @param networkName EnigmaIOT network name
+    * @param nodeName Node name. Can be NULL
+    * @return Returns `true` if data could be written successfuly. `false` otherwise
+    */
+    bool sendHADiscoveryJSON (uint8_t* address, uint8_t* data, size_t len, const char* networkName, const char* nodeName);
+#endif
+    
 public:
    /**
 	* @brief Gets flag that indicates if configuration should be saved
@@ -718,7 +740,17 @@ public:
 	 */
 	void onDataRx (onGwDataRx_t handler) {
 		notifyData = handler;
-	}
+    }
+
+#if SUPPORT_HA_DISCOVERY
+    /**
+     * @brief Defines a function callback that will be called when a Home Assistant discovery message is received from a node
+ 	 * @param handler Pointer to the function
+     */
+    void onHADiscovery (onHADiscovery_t handler) {
+        notifyHADiscovery = handler;
+    }
+#endif
 
 	/**
 	 * @brief Gets packet error rate of node that has a specific address

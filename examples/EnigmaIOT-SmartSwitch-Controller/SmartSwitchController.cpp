@@ -136,11 +136,13 @@ bool CONTROLLER_CLASS_NAME::processRxCommand (const uint8_t* address, const uint
 }
 
 bool CONTROLLER_CLASS_NAME::sendRelayStatus () {
-	const size_t capacity = JSON_OBJECT_SIZE (2);
+	const size_t capacity = JSON_OBJECT_SIZE (6);
 	DynamicJsonDocument json (capacity);
 
 	json[commandKey] = relayKey;
-	json[relayKey] = config.relayStatus;
+    json[relayKey] = config.relayStatus ? 1 : 0;
+    json[linkKey] = config.linked ? 1 : 0;
+    json[bootStateKey] = config.bootStatus;
 
 	return sendJson (json);
 }
@@ -150,7 +152,7 @@ bool CONTROLLER_CLASS_NAME::sendLinkStatus () {
 	DynamicJsonDocument json (capacity);
 
 	json[commandKey] = linkKey;
-	json[linkKey] = config.linked;
+    json[linkKey] = config.linked ? 1 : 0;
 
 	return sendJson (json);
 }
@@ -171,6 +173,18 @@ bool CONTROLLER_CLASS_NAME::sendCommandResp (const char* command, bool result) {
 	return true;
 }
 
+void CONTROLLER_CLASS_NAME::connectInform () {
+
+#if SUPPORT_HA_DISCOVERY    
+    // Register every HAEntity discovery function here. As many as you need
+    addHACall (std::bind (&CONTROLLER_CLASS_NAME::buildHASwitchDiscovery, this));
+    addHACall (std::bind (&CONTROLLER_CLASS_NAME::buildHATriggerDiscovery, this));
+    addHACall (std::bind (&CONTROLLER_CLASS_NAME::buildHALinkDiscovery, this));
+#endif
+
+    EnigmaIOTjsonController::connectInform ();
+}
+
 void CONTROLLER_CLASS_NAME::setup (EnigmaIOTNodeClass* node, void* data) {
 	enigmaIotNode = node;
 
@@ -184,11 +198,11 @@ void CONTROLLER_CLASS_NAME::setup (EnigmaIOTNodeClass* node, void* data) {
 	}
 	DEBUG_WARN ("Relay status set to %s", config.relayStatus ? "ON" : "OFF");
 	digitalWrite (config.relayPin, config.relayStatus);
-	if (!sendRelayStatus ()) {
-		DEBUG_WARN ("Error sending relay status");
-	}
+	// if (!sendRelayStatus ()) {
+	// 	DEBUG_WARN ("Error sending relay status");
+	// }
 
-	// Send a 'hello' message when initalizing is finished
+    // Send a 'hello' message when initalizing is finished
 	sendStartAnouncement ();
 
 	DEBUG_WARN ("Finish begin");
@@ -197,12 +211,12 @@ void CONTROLLER_CLASS_NAME::setup (EnigmaIOTNodeClass* node, void* data) {
 }
 
 void CONTROLLER_CLASS_NAME::toggleRelay () {
-	DEBUG_WARN ("Toggle relay");
+	DEBUG_INFO ("Toggle relay");
 	config.relayStatus = !config.relayStatus;
 	digitalWrite (config.relayPin, config.relayStatus ? ON : OFF);
 	if (config.bootStatus == SAVE_RELAY_STATUS) {
 		if (saveConfig ()) {
-			DEBUG_WARN ("Config updated. Relay is %s", config.relayStatus ? "ON" : "OFF");
+			DEBUG_INFO ("Config updated. Relay is %s", config.relayStatus ? "ON" : "OFF");
 		} else {
 			DEBUG_ERROR ("Error saving config");
 		}
@@ -255,7 +269,7 @@ void CONTROLLER_CLASS_NAME::loop () {
 		if (!digitalRead (config.buttonPin)) {
 			delay (50); // debounce button push
 			if (!digitalRead (config.buttonPin)) {
-				DEBUG_WARN ("Button triggered!");
+				DEBUG_INFO ("Button triggered!");
 				pushTriggered = true; // Button is pushed
 				pushReleased = false; // Mark button as not released
 			}
@@ -269,7 +283,7 @@ void CONTROLLER_CLASS_NAME::loop () {
 		json[buttonKey] = config.buttonPin;
 		json["push"] = 1;
 		if (sendJson (json)) {
-			DEBUG_WARN ("Push triggered sent");
+			DEBUG_INFO ("Push triggered sent");
 		} else {
 			DEBUG_ERROR ("Push send error");
 		}
@@ -280,10 +294,18 @@ void CONTROLLER_CLASS_NAME::loop () {
 
 	if (!pushReleased) {
 		if (digitalRead (config.buttonPin)) { // If button is released
-			DEBUG_WARN ("Button released");
+			DEBUG_INFO ("Button released");
 			pushReleased = true;
 		}
-	}
+    }
+
+    static clock_t lastSentStatus;
+    static clock_t sendStatusPeriod = 2000;
+    if (enigmaIotNode->isRegistered () && millis () - lastSentStatus > sendStatusPeriod) {
+        lastSentStatus = millis ();
+        sendStatusPeriod = 300000;
+        sendRelayStatus ();
+    }
 }
 
 CONTROLLER_CLASS_NAME::~CONTROLLER_CLASS_NAME () {
@@ -310,14 +332,14 @@ void CONTROLLER_CLASS_NAME::configManagerStart () {
 	bootStatusParam = new AsyncWiFiManagerParameter ("bootStatus", "Boot Relay Status", "", 6, "required type=\"text\" list=\"bootStatusList\" pattern=\"^ON$|^OFF$|^SAVE$\"");
 	bootStatusListParam = new AsyncWiFiManagerParameter ("<datalist id=\"bootStatusList\">" \
 														 "<option value = \"OFF\" >" \
+														 "<option valsenue = \"OFF\" >" \
 														 "<option value = \"ON\">" \
 														 "<option value = \"SAVE\">" \
 														 "</datalist>");
-
-	enigmaIotNode->addWiFiManagerParameter (buttonPinParam);
-	enigmaIotNode->addWiFiManagerParameter (relayPinParam);
-	enigmaIotNode->addWiFiManagerParameter (bootStatusListParam);
-	enigmaIotNode->addWiFiManagerParameter (bootStatusParam);
+	EnigmaIOTNode.addWiFiManagerParameter (buttonPinParam);
+    EnigmaIOTNode.addWiFiManagerParameter (relayPinParam);
+    EnigmaIOTNode.addWiFiManagerParameter (bootStatusListParam);
+    EnigmaIOTNode.addWiFiManagerParameter (bootStatusParam);
 }
 
 void CONTROLLER_CLASS_NAME::configManagerExit (bool status) {
@@ -449,19 +471,19 @@ bool CONTROLLER_CLASS_NAME::loadConfig () {
 }
 
 bool CONTROLLER_CLASS_NAME::saveConfig () {
-	// If you need to save custom configuration data do it here
+    // If you need to save custom configuration data do it here
     if (!FILESYSTEM.begin ()) {
 		DEBUG_WARN ("Error opening filesystem");
 		return false;
 	}
-	DEBUG_WARN ("Filesystem opened");
+	DEBUG_INFO ("Filesystem opened");
 
     File configFile = FILESYSTEM.open (CONFIG_FILE, "w");
 	if (!configFile) {
 		DEBUG_WARN ("Failed to open config file %s for writing", CONFIG_FILE);
 		return false;
 	} else {
-		DEBUG_WARN ("%s opened for writting", CONFIG_FILE);
+		DEBUG_INFO ("%s opened for writting", CONFIG_FILE);
 	}
 
 	DynamicJsonDocument doc (512);
@@ -485,7 +507,7 @@ bool CONTROLLER_CLASS_NAME::saveConfig () {
 	char* output = (char*)malloc (jsonLen);
 	serializeJsonPretty (doc, output, jsonLen);
 
-	DEBUG_WARN ("File content:\n%s", output);
+	DEBUG_DBG ("File content:\n%s", output);
 
 	free (output);
 
@@ -494,7 +516,140 @@ bool CONTROLLER_CLASS_NAME::saveConfig () {
 
 	//configFile.write ((uint8_t*)(&mqttgw_config), sizeof (mqttgw_config));
 	configFile.close ();
-	DEBUG_WARN ("Smart Switch controller configuration saved to flash. %u bytes", size);
+	DEBUG_DBG ("Smart Switch controller configuration saved to flash. %u bytes", size);
 
 	return true;
 }
+
+#if SUPPORT_HA_DISCOVERY   
+// Repeat this method for every entity
+void CONTROLLER_CLASS_NAME::buildHASwitchDiscovery () {
+    // Select corresponding HAEntiny type
+    HASwitch* haEntity = new HASwitch ();
+
+    uint8_t* msgPackBuffer;
+
+    if (!haEntity) {
+        DEBUG_WARN ("JSON object instance does not exist");
+        return;
+    }
+
+    // *******************************
+    // Add your characteristics here
+    // There is no need to futher modify this function
+
+    haEntity->setNameSufix ("switch");
+    haEntity->setStateOn (1);
+    haEntity->setStateOff (0);
+    haEntity->setValueField ("rly");
+    haEntity->setPayloadOff ("{\"cmd\":\"rly\",\"rly\":0}");
+    haEntity->setPayloadOn ("{\"cmd\":\"rly\",\"rly\":1}");
+    // *******************************
+
+    size_t bufferLen = haEntity->measureMessage ();
+
+    msgPackBuffer = (uint8_t*)malloc (bufferLen);
+
+    size_t len = haEntity->getAnounceMessage (bufferLen, msgPackBuffer);
+
+    DEBUG_INFO ("Resulting MSG pack length: %d", len);
+
+    if (!sendHADiscovery (msgPackBuffer, len)) {
+        DEBUG_WARN ("Error sending HA discovery message");
+    }
+
+    if (haEntity) {
+        delete (haEntity);
+    }
+
+    if (msgPackBuffer) {
+        free (msgPackBuffer);
+    }
+}
+
+void CONTROLLER_CLASS_NAME::buildHALinkDiscovery () {
+    // Select corresponding HAEntiny type
+    HASwitch* haEntity = new HASwitch ();
+
+    uint8_t* msgPackBuffer;
+
+    if (!haEntity) {
+        DEBUG_WARN ("JSON object instance does not exist");
+        return;
+    }
+
+    // *******************************
+    // Add your characteristics here
+    // There is no need to futher modify this function
+
+    haEntity->setNameSufix ("link");
+    haEntity->setStateOn (1);
+    haEntity->setStateOff (0);
+    haEntity->setValueField ("link");
+    haEntity->setPayloadOff ("{\"cmd\":\"link\",\"link\":0}");
+    haEntity->setPayloadOn ("{\"cmd\":\"link\",\"link\":1}");
+    // *******************************
+
+    size_t bufferLen = haEntity->measureMessage ();
+
+    msgPackBuffer = (uint8_t*)malloc (bufferLen);
+
+    size_t len = haEntity->getAnounceMessage (bufferLen, msgPackBuffer);
+
+    DEBUG_INFO ("Resulting MSG pack length: %d", len);
+
+    if (!sendHADiscovery (msgPackBuffer, len)) {
+        DEBUG_WARN ("Error sending HA discovery message");
+    }
+
+    if (haEntity) {
+        delete (haEntity);
+    }
+
+    if (msgPackBuffer) {
+        free (msgPackBuffer);
+    }
+}
+
+void CONTROLLER_CLASS_NAME::buildHATriggerDiscovery () {
+    // Select corresponding HAEntiny type
+    HATrigger* haEntity = new HATrigger ();
+
+    uint8_t* msgPackBuffer;
+
+    if (!haEntity) {
+        DEBUG_WARN ("JSON object instance does not exist");
+        return;
+    }
+
+    // *******************************
+    // Add your characteristics here
+    // There is no need to futher modify this function
+
+    haEntity->setNameSufix ("button");
+    haEntity->setType (button_short_press);
+    haEntity->setSubtype (turn_on);
+    haEntity->setPayload ("{\"button\":4,\"push\":1}");
+    // *******************************
+
+    size_t bufferLen = haEntity->measureMessage ();
+
+    msgPackBuffer = (uint8_t*)malloc (bufferLen);
+
+    size_t len = haEntity->getAnounceMessage (bufferLen, msgPackBuffer);
+
+    DEBUG_INFO ("Resulting MSG pack length: %d", len);
+
+    if (!sendHADiscovery (msgPackBuffer, len)) {
+        DEBUG_WARN ("Error sending HA discovery message");
+    }
+
+    if (haEntity) {
+        delete (haEntity);
+    }
+
+    if (msgPackBuffer) {
+        free (msgPackBuffer);
+    }
+}
+#endif // SUPPORT_HA_DISCOVERY

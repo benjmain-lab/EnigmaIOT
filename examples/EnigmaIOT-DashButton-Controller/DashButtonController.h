@@ -19,6 +19,10 @@
 #define CONTROLLER_CLASS_NAME DashButtonController
 static const char* CONTROLLER_NAME = "DashButton controller";
 
+#if SUPPORT_HA_DISCOVERY    
+#include <haTrigger.h>
+#endif
+
 // --------------------------------------------------
 // You may define data structures and constants here
 // --------------------------------------------------
@@ -28,7 +32,7 @@ protected:
 	// --------------------------------------------------
 	// add all parameters that your project needs here
 	// --------------------------------------------------
-
+    bool buttonPressSent = false;
 public:
 	void setup (EnigmaIOTNodeClass* node, void* data = NULL);
 
@@ -55,9 +59,7 @@ public:
 	 */
 	bool loadConfig ();
 
-	void connectInform () {
-		sendStartAnouncement ();
-	}
+    void connectInform ();
 
 protected:
 	/**
@@ -82,6 +84,8 @@ protected:
         return sendJson (json);
     }
 
+    void buildHADiscovery ();
+    
 	// ------------------------------------------------------------
 	// You may add additional method definitions that you need here
 	// ------------------------------------------------------------

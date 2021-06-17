@@ -534,6 +534,20 @@ void GwOutput_MQTT::popMQTTqueue () {
 	}
 }
 
+#if SUPPORT_HA_DISCOVERY
+bool GwOutput_MQTT::rawMsgSend (const char* topic, char* payload, size_t len, bool retain) {
+    bool result;
+    
+    if ((result = addMQTTqueue (topic, payload, len, retain))) {
+        DEBUG_INFO ("MQTT queued %s. Length %d", topic, len);
+    } else {
+        DEBUG_WARN ("Error queuing MQTT %s", topic);
+    }
+    return result;
+}
+#endif
+
+
 bool GwOutput_MQTT::outputDataSend (char* address, char* data, size_t length, GwOutput_data_type_t type) {
 	const int TOPIC_SIZE = 64;
 	char topic[TOPIC_SIZE];
@@ -588,7 +602,7 @@ bool GwOutput_MQTT::outputControlSend (char* address, uint8_t* data, size_t leng
 		break;
 	case control_message_type::RESET_ANS:
 		snprintf (topic, TOPIC_SIZE, "%s/%s/%s", netName.c_str (), address, SET_RESET_ANS);
-		pld_size = snprintf (payload, PAYLOAD_SIZE, "{}");
+		pld_size = snprintf (payload, PAYLOAD_SIZE, "{\"result\":\"OK\"}");
 		if (addMQTTqueue (topic, payload, pld_size)) {
 			DEBUG_INFO ("Published MQTT %s %s", topic, payload);
 			result = true;
@@ -674,7 +688,7 @@ bool GwOutput_MQTT::newNodeSend (char* address, uint16_t node_id) {
 	snprintf (payload, ENIGMAIOT_ADDR_LEN * 3 + 14, "{\"address\":\"%s\"}", mac2str (nodeAddress, addrStr));
 
 	snprintf (topic, TOPIC_SIZE, "%s/%s/hello", netName.c_str (), address);
-	bool result = addMQTTqueue (topic, payload, ENIGMAIOT_ADDR_LEN * 3 + 14);
+	bool result = addMQTTqueue (topic, payload, ENIGMAIOT_ADDR_LEN * 3 + 13);
 	DEBUG_INFO ("Published MQTT %s", topic);
 	return result;
 }

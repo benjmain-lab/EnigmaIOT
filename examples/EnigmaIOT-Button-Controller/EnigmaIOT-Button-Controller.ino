@@ -50,7 +50,7 @@
 
 EnigmaIOTjsonController* controller; // Generic controller is refferenced here. You do not need to modify it
 
-#define RESET_PIN 13 // You can set a different configuration reset pin here. Check for conflicts with used pins.
+#define RESET_PIN 5 // You can set a different configuration reset pin here. Check for conflicts with used pins.
 
 const time_t BOOT_FLAG_TIMEOUT = 10000; // Time in ms to reset flag
 const int MAX_CONSECUTIVE_BOOT = 3; // Number of rapid boot cycles before enabling fail safe mode
@@ -59,8 +59,8 @@ const int FAILSAFE_RTC_ADDRESS = 0; // If you use RTC memory adjust offset to no
 
 // Called when node is connected to gateway. You don't need to do anything here usually
 void connectEventHandler () {
-	controller->connectInform ();
 	DEBUG_WARN ("Connected");
+    controller->connectInform ();
 }
 
 // Called when node is unregistered from gateway. You don't need to do anything here usually
@@ -69,8 +69,14 @@ void disconnectEventHandler (nodeInvalidateReason_t reason) {
 }
 
 // Called to route messages to EnitmaIOTNode class. Do not modify
-bool sendUplinkData (const uint8_t* data, size_t len, nodePayloadEncoding_t payloadEncoding) {
-	return EnigmaIOTNode.sendData (data, len, payloadEncoding);
+bool sendUplinkData (const uint8_t* data, size_t len, nodePayloadEncoding_t payloadEncoding, dataMessageType_t dataMsgType) {
+    if (dataMsgType == DATA_TYPE) {
+        return EnigmaIOTNode.sendData (data, len, payloadEncoding);    
+    } else if (dataMsgType == HA_DISC_TYPE) {
+        return EnigmaIOTNode.sendHADiscoveryMessage (data, len);
+    } else {
+        return false;
+    }
 }
 
 // Called to route incoming messages to your code. Do not modify
@@ -95,8 +101,7 @@ void wifiManagerStarted () {
 void setup () {
 
 #ifdef USE_SERIAL
-	Serial.begin (115200);
-	delay (1000);
+    Serial.begin (921600);
 	Serial.println ();
 #endif
 
@@ -156,6 +161,7 @@ void loop () {
         return;
     }
 
-	controller->loop (); // Loop controller class
+    controller->loop (); // Loop controller class
+    controller->callHAdiscoveryCalls (); // Send HA registration messages
 	EnigmaIOTNode.handle (); // Mantain EnigmaIOT connection
 }
