@@ -28,7 +28,10 @@ protected:
     int readIndex = 0; ///< @brief Pointer to next item to be read
     int writeIndex = 0; ///< @brief Pointer to next position to write onto
     Telement* buffer; ///< @brief Actual buffer
-
+    Telement* overflowBuffer;
+    uint8_t MAX_OVERFLOW_BUFFER_SIZE = 15;
+    uint8_t overflow_index = MAX_OVERFLOW_BUFFER_SIZE + 1;
+    bool deleteOverflow = false;
 public:
     /**
       * @brief Creates a ring buffer to hold `Telement` objects
@@ -78,6 +81,12 @@ public:
         portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
         portENTER_CRITICAL (&myMutex);
 #endif
+        if (wasFull && writeIndex == readIndex) { 
+          //that means this is overwriting, because the buffer was full
+          //lets savee this item in some other buffer
+          pushInOverFlowBuffer();
+        }
+        
         memcpy (&(buffer[writeIndex]), item, sizeof (Telement));
         //Serial.printf ("Copied: %d bytes\n", sizeof (Telement));
         writeIndex++;
@@ -124,12 +133,57 @@ public:
       */
     Telement* front () {
         DEBUG_DBG ("Read element. ReadIdx: %d. WriteIdx: %d. Size: %d", readIndex, writeIndex, numElements);
+        shouldDeleteOverflowBuffer();
         if (!empty ()) {
             return &(buffer[readIndex]);
         } else {
-            return NULL;
+            return frontOverflowBuffer();
         }
     }
+
+    void pushInOverFlowBuffer() {
+      shouldDeleteOverflowBuffer();
+      if (overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1) {
+        DEBUG_INFO("Overflow Buffer initiated");
+        overflowBuffer = new Telement[MAX_OVERFLOW_BUFFER_SIZE];
+        overflow_index = 0;
+      } else if (overflow_index > MAX_OVERFLOW_BUFFER_SIZE - 1) {
+        // Even extra buffer is full, need to check this
+        DEBUG_ERROR("Overflow Buffer is also full, disacrding message now\n");
+        return;
+      } else {
+        memcpy(&(overflowBuffer[overflow_index++]), &(buffer[writeIndex]),
+               sizeof(Telement));
+      }
+    }
+
+    Telement* frontOverflowBuffer() {
+      if (overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1) {
+        shouldDeleteOverflowBuffer();
+        return NULL;
+      } else {
+        if (overflow_index - 1 == 0) {
+          overflow_index = MAX_OVERFLOW_BUFFER_SIZE + 1;
+          deleteOverflow = true;
+          return &(overflowBuffer[0]);
+        }
+        DEBUG_INFO(
+            "Reading from overflow buffer, ob size:%d, main buf size: %d, "
+            "rdIdx:%d, wrIdx: %d",
+            overflow_index, numElements, readIndex, writeIndex);
+        return &(overflowBuffer[--overflow_index]);
+      }
+    }
+
+    void shouldDeleteOverflowBuffer() {
+      if (deleteOverflow) {
+        DEBUG_INFO("Overflow Buffer is deleting now");
+        delete[](overflowBuffer);
+        deleteOverflow = false;
+      }
+    }
+
+    bool empty2() { return overflow_index == MAX_OVERFLOW_BUFFER_SIZE + 1; }
 };
 
 #endif
