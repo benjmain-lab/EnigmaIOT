@@ -868,7 +868,7 @@ msg_queue_item_t* EnigmaIOTGatewayClass::getInputMsgQueue (msg_queue_item_t* buf
 #endif
 	message = input_queue->front ();
 	if (message) {
-		DEBUG_DBG ("EnigmaIOT message got from queue. Size: %d", input_queue->size ());
+		// DEBUG_DBG ("EnigmaIOT message got from queue. Size: %d", input_queue->size ());
 		memcpy (buffer->data, message->data, message->len);
 		memcpy (buffer->addr, message->addr, ENIGMAIOT_ADDR_LEN);
 		buffer->len = message->len;
