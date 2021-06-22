@@ -191,6 +191,7 @@ int32_t Espnow_halClass::sendEspNowMessage (comms_queue_item_t* message) {
     error = esp_now_send (message->dstAddress, message->payload, message->payload_len);
     DEBUG_DBG ("Ready to send: false");
     readyToSend = false;
+    lastSentMessage = millis();
 #ifdef ESP32
     DEBUG_DBG ("esp now send result = %s", esp_err_to_name(error));
 	//if (_ownPeerType == COMM_GATEWAY) {
@@ -223,6 +224,14 @@ void Espnow_halClass::handle () {
                 }
                 popCommsQueue ();
             }
+        }
+    } else{
+        // This is happening in esp 32, sometimes the tx_cb is not called and hence readyToSend is never set to true. 
+        // This is happening when the gateway connects to the home router a little late. 
+        // Also in cases when the gateway tried to send messages to devices but the devices did not recieve them earlier. 
+        // Resetting this here is just a way to deal with hung up callbacks.
+        if(millis() - lastSentMessage > 500){
+            readyToSend = true;
         }
     }
 }

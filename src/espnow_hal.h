@@ -36,7 +36,8 @@ public:
 protected:
 
     EnigmaIOTRingBuffer<comms_queue_item_t> out_queue;
-    bool readyToSend = true;
+    volatile bool readyToSend = true;
+	unsigned long lastSentMessage = 0;
 #ifdef ESP32
     TaskHandle_t espnowLoopTask;
 #else // ESP8266
