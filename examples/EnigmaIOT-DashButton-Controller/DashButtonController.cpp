@@ -27,6 +27,15 @@ bool CONTROLLER_CLASS_NAME::sendCommandResp (const char* command, bool result) {
 	return true;
 }
 
+void CONTROLLER_CLASS_NAME::connectInform () {
+
+#if SUPPORT_HA_DISCOVERY    
+    addHACall (std::bind (&CONTROLLER_CLASS_NAME::buildHADiscovery, this));
+#endif
+
+    EnigmaIOTjsonController::connectInform ();
+}
+
 void CONTROLLER_CLASS_NAME::setup (EnigmaIOTNodeClass* node, void* data) {
 	enigmaIotNode = node;
 	// You do node setup here. Use it as it was the normal setup() Arduino function
@@ -34,16 +43,6 @@ void CONTROLLER_CLASS_NAME::setup (EnigmaIOTNodeClass* node, void* data) {
 	// Send a 'hello' message when initalizing is finished
 	// Not needed as this will reboot after deep sleep
 	// sendStartAnouncement (); 
-
-	const size_t capacity = JSON_OBJECT_SIZE (2);
-	DynamicJsonDocument json (capacity);
-	json["button"] = 1;
-
-	if (sendJson (json)) {
-		DEBUG_WARN ("Button press sent");
-	} else {
-		DEBUG_WARN ("Error sending message");
-	}
 
 	DEBUG_DBG ("Finish begin");
 
@@ -56,7 +55,20 @@ void CONTROLLER_CLASS_NAME::loop () {
 
 	// You can send your data as JSON. This is a basic example
 
-		//const size_t capacity = JSON_OBJECT_SIZE (4);
+    if (!buttonPressSent && enigmaIotNode->isRegistered ()) {
+        const size_t capacity = JSON_OBJECT_SIZE (2);
+        DynamicJsonDocument json (capacity);
+        json["button"] = 1;
+
+        if (sendJson (json)) {
+            DEBUG_WARN ("Button press sent");
+            buttonPressSent = true;
+        } else {
+            DEBUG_WARN ("Error sending message");
+        }
+    }
+
+        //const size_t capacity = JSON_OBJECT_SIZE (4);
 		//DynamicJsonDocument json (capacity);
 		//json["sensor"] = data_description;
 		//json["meas"] = measurement;
@@ -89,3 +101,47 @@ bool CONTROLLER_CLASS_NAME::saveConfig () {
 	// If you need to save custom configuration data do it here
 	return true;
 }
+
+#if SUPPORT_HA_DISCOVERY    
+// Repeat this method for every entity
+void CONTROLLER_CLASS_NAME::buildHADiscovery () {
+    // Select corresponding HAEntiny type
+    HATrigger* haEntity = new HATrigger ();
+
+    uint8_t* msgPackBuffer;
+
+    if (!haEntity) {
+        DEBUG_WARN ("JSON object instance does not exist");
+        return;
+    }
+
+    // *******************************
+    // Add your characteristics here
+    // There is no need to futher modify this function
+
+    haEntity->setType (button_short_press);
+    haEntity->setSubtype (turn_on);
+
+    // *******************************
+
+    size_t bufferLen = haEntity->measureMessage ();
+
+    msgPackBuffer = (uint8_t*)malloc (bufferLen);
+
+    size_t len = haEntity->getAnounceMessage (bufferLen, msgPackBuffer);
+
+    DEBUG_DBG ("Resulting MSG pack length: %d", len);
+
+    if (!sendHADiscovery (msgPackBuffer, len)) {
+        DEBUG_WARN ("Error sending HA discovery message");
+    }
+
+    if (haEntity) {
+        delete (haEntity);
+    }
+
+    if (msgPackBuffer) {
+        free (msgPackBuffer);
+    }
+}
+#endif // SUPPORT_HA_DISCOVERY

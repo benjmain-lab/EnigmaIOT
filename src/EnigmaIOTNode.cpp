@@ -62,7 +62,7 @@ void EnigmaIOTNodeClass::sendRestart () {
 
 	DEBUG_WARN ("Message Len %d\n", len);
 	DEBUG_WARN ("Trying to send: %s\n", printHexBuffer (buffer, len));
-	if (!EnigmaIOTNode.sendData (buffer, len, true)) {
+	if (!EnigmaIOTNode.sendData (buffer, len, CONTROL_TYPE)) {
 		DEBUG_WARN ("Error sending restart");
 	} else {
 		DEBUG_WARN ("Restart sent");
@@ -146,7 +146,7 @@ const char* RTC_DATA_FILE = "/context.bin";
 bool EnigmaIOTNodeClass::loadRTCData () {
     //FILESYSTEM.remove (RTC_DATA_FILE); // Only for testing
 	//bool file_correct = false;
-	time_t start_load = millis ();
+	clock_t start_load = millis ();
     FILESYSTEM.begin ();
 
 	rtcmem_data_t context;
@@ -213,7 +213,7 @@ bool EnigmaIOTNodeClass::loadRTCData () {
 		return false;
 	}
 
-	DEBUG_DBG ("Load process finished in %d ms", millis () - start_load);
+	DEBUG_DBG ("Load process finished in %lu ms", millis () - start_load);
 
 	return true;
 }
@@ -405,7 +405,7 @@ bool EnigmaIOTNodeClass::saveFlashData (bool fsOpen) {
 
 #if USE_FLASH_INSTEAD_RTC
 bool EnigmaIOTNodeClass::saveRTCData () {
-	time_t start_save = millis ();
+	clock_t start_save = millis ();
 	if (configCleared)
 		return false;
 	rtcmem_data.crc32 = calculateCRC32 ((uint8_t*)rtcmem_data.nodeKey, sizeof (rtcmem_data) - sizeof (uint32_t));
@@ -423,7 +423,7 @@ bool EnigmaIOTNodeClass::saveRTCData () {
 #if DEBUG_LEVEL >= VERBOSE
 	dumpRtcData (&rtcmem_data);
 #endif
-	DEBUG_DBG ("Save process finished in %d ms", millis () - start_save);
+	DEBUG_DBG ("Save process finished in %lu ms", millis () - start_save);
 
 	return true;
 }
@@ -463,15 +463,17 @@ bool EnigmaIOTNodeClass::saveRTCData () {
 
 void EnigmaIOTNodeClass::clearFlash () {
     if (!FILESYSTEM.begin ()) {
-		DEBUG_ERROR ("Error on SPIFFS.begin()");
-	}
+        DEBUG_ERROR ("Error on FILESYSTEM.begin()");
+    }
+    
+    DEBUG_WARN ("About to format Flash");
     if (FILESYSTEM.format()) {
-        DEBUG_DBG ("Filesystem formatted");
+        DEBUG_WARN ("Filesystem formatted");
     }
     /*if (FILESYSTEM.remove (CONFIG_FILE)) {
 		DEBUG_DBG ("%s deleted", CONFIG_FILE);
 	}*/ else {
-		DEBUG_ERROR ("Error on SPIFFS.format()", CONFIG_FILE);
+        DEBUG_ERROR ("Error on FILESYSTEM.format()", CONFIG_FILE);
 	}
     FILESYSTEM.end ();
 }
@@ -534,7 +536,7 @@ bool EnigmaIOTNodeClass::configWiFiManager (rtcmem_data_t* data) {
 		const char* netkey = (char*)(wifiConfig.password);
 #elif defined ESP32
         wifi_config_t wifiConfig;
-        if (!esp_wifi_get_config (WIFI_IF_STA, &wifiConfig)) {
+        if (esp_wifi_get_config (WIFI_IF_STA, &wifiConfig)) {
             DEBUG_WARN ("Error getting WiFi config");
         }
         DEBUG_WARN ("WiFi password: %.*s", 64, wifiConfig.sta.password);
@@ -677,7 +679,7 @@ void EnigmaIOTNodeClass::checkResetButton () {
 			time_t resetPinGrounded = millis ();
 			while (digitalRead (resetPin) == LOW) {
 				if (millis () - resetPinGrounded > RESET_PIN_DURATION) {
-					DEBUG_WARN ("Produce reset");
+                    DEBUG_WARN ("Produce reset. Reset pin %d", resetPin);
 					digitalWrite (led, LED_OFF); // Turn off LED
 					startFlash (50);
 					clearFlash ();
@@ -804,22 +806,22 @@ void EnigmaIOTNodeClass::begin (Comms_halClass* comm, uint8_t* gateway, uint8_t*
             if (!FILESYSTEM.begin ()) {
 				DEBUG_ERROR ("Error mounting flash");
                 if (FILESYSTEM.format ()) {
-					DEBUG_INFO ("SPIFFS formatted");
+                    DEBUG_INFO ("FILESYSTEM formatted");
 				} else {
-					DEBUG_ERROR ("Error formatting SPIFFS");
+                    DEBUG_ERROR ("Error formatting FILESYSTEM");
 				}
 				delay (2500);
 				ESP.restart ();
 				//return;
 			} else {
-				DEBUG_INFO ("SPIFFS mounted");
+                DEBUG_INFO ("FILESYSTEM mounted");
 			}
 			if (loadFlashData ()) { // If data present on flash, read and continue
 				node.setStatus (UNREGISTERED);
 				DEBUG_DBG ("Flash data loaded");
 				uint8_t prevGwAddr[ENIGMAIOT_ADDR_LEN];
 				memcpy (prevGwAddr, rtcmem_data.gateway, 6);
-				if (searchForGateway (&rtcmem_data), true) {
+				if (searchForGateway (&rtcmem_data, true)) {
 					//DEBUG_DBG ("Found gateway. Storing");
 					rtcmem_data.commErrors = 0;
 				}
@@ -828,7 +830,7 @@ void EnigmaIOTNodeClass::begin (Comms_halClass* comm, uint8_t* gateway, uint8_t*
 				bool result = configWiFiManager (&rtcmem_data);
 				if (result) {
 					DEBUG_DBG ("Got configuration. Searching for Gateway");
-					if (!searchForGateway (&rtcmem_data), true) {
+					if (searchForGateway (&rtcmem_data, true)) {
 						DEBUG_DBG ("Found EnigmaIOT Gateway. Storing configuration");
 						if (!saveFlashData (true)) {
 							DEBUG_ERROR ("Error saving data on flash");
@@ -838,8 +840,14 @@ void EnigmaIOTNodeClass::begin (Comms_halClass* comm, uint8_t* gateway, uint8_t*
 						return;
 					}
                     FILESYSTEM.end ();
-					ESP.restart ();
-				} else { // Configuration error
+                    if (node.getSleepy ()) {
+                        DEBUG_WARN ("No gateway found. Go to sleep for 120 seconds");
+                        ESP.deepSleep (120);
+                    } else {
+                        DEBUG_WARN ("No gateway found. Restarting");
+                        ESP.restart ();
+                    }
+                } else { // Configuration error
 					DEBUG_ERROR ("Configuration error. Restarting");
 					ESP.restart ();
 				}
@@ -926,6 +934,8 @@ bool EnigmaIOTNodeClass::searchForGateway (rtcmem_data_t* data, bool shouldStore
 	int numWifi = 0;
 	int wifiIndex = 0;
 
+    comm->enableTransmit (false);
+    DEBUG_DBG ("Transmission disabled");
 #ifdef ESP8266
     time_t scanStarted = millis ();
 	numWifi = WiFi.scanNetworks (false, false, 0, (uint8_t*)(data->networkName));
@@ -944,6 +954,8 @@ bool EnigmaIOTNodeClass::searchForGateway (rtcmem_data_t* data, bool shouldStore
 #elif defined ESP32
 	numWifi = scanGatewaySSID (data->networkName, wifiIndex);
 #endif // ESP8266
+    comm->enableTransmit (true);
+    DEBUG_DBG ("Transmission enabled");
 
 	uint8_t prevGwAddr[ENIGMAIOT_ADDR_LEN];
 	memcpy (prevGwAddr, data->gateway, 6);
@@ -1048,7 +1060,7 @@ bool EnigmaIOTNodeClass::reportRSSI () {
 	buffer[2] = rtcmem_data.channel;
 	bufLength = 3;
 
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Sleep time is %d seconds", sleepTime / 1000000);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return true;
@@ -1107,7 +1119,8 @@ void EnigmaIOTNodeClass::handle () {
             } else {
                 DEBUG_WARN ("Go to sleep indefinitely");
             }
-			DEBUG_WARN ("%d", millis ());
+            DEBUG_WARN ("%d", millis ());
+            comm->enableTransmit (false);
 #ifdef ESP8266
 			ESP.deepSleep (sleep_t);
 #elif defined ESP32
@@ -1168,7 +1181,7 @@ void EnigmaIOTNodeClass::handle () {
 			uint8_t responseBuffer[2];
 			responseBuffer[0] = control_message_type::OTA_ANS;
 			responseBuffer[1] = ota_status::OTA_TIMEOUT;
-			if (sendData (responseBuffer, sizeof (responseBuffer), true)) {
+			if (sendData (responseBuffer, sizeof (responseBuffer), CONTROL_TYPE)) {
 				DEBUG_INFO ("OTA TIMEOUT");
 			}
 			otaRunning = false;
@@ -1220,7 +1233,7 @@ void EnigmaIOTNodeClass::handle () {
 		if (!gatewaySearchStarted) {
 			gatewaySearchStarted = true;
 
-			if (searchForGateway (&rtcmem_data), true) {
+			if (searchForGateway (&rtcmem_data, true)) {
 				rtcmem_data.commErrors = 0;
 			}
 		}
@@ -1590,8 +1603,8 @@ bool EnigmaIOTNodeClass::processServerHello (const uint8_t* mac, const uint8_t* 
 	return true;
 }
 
-bool EnigmaIOTNodeClass::sendData (const uint8_t* data, size_t len, bool controlMessage, bool encrypt, nodePayloadEncoding_t payloadType) {
-	if (!controlMessage) {
+bool EnigmaIOTNodeClass::sendData (const uint8_t* data, size_t len, dataMessageType_t dataMsgType, bool encrypt, nodePayloadEncoding_t payloadType) {
+	if (!dataMsgType) {
 		memcpy (dataMessageSent, data, len);
 		dataMessageSentLength = len;
 		dataMessageEncrypt = encrypt;
@@ -1601,13 +1614,15 @@ bool EnigmaIOTNodeClass::sendData (const uint8_t* data, size_t len, bool control
 	node.setLastMessageTime (); // Mark message time to start RX window start
 
 	if (node.getStatus () == REGISTERED && node.isKeyValid ()) {
-		if (controlMessage) {
-			DEBUG_VERBOSE ("Control message sent: %s", printHexBuffer (data, len));
-		} else {
+		if (dataMsgType == CONTROL_TYPE) {
+            DEBUG_VERBOSE ("Control message sent: %s", printHexBuffer (data, len));
+        } else if (dataMsgType == HA_DISC_TYPE) {
+            DEBUG_VERBOSE ("HA discovery message sent: %s", printHexBuffer (data, len));
+        } else {
 			DEBUG_VERBOSE ("%s data sent: %s", encrypt ? "Encrypted" : "Unencrypted", printHexBuffer (data, len));
 		}
 		flashBlue = true;
-		if (dataMessage (data, len, controlMessage, encrypt, payloadType)) {
+		if (dataMessage (data, len, dataMsgType, encrypt, payloadType)) {
 			dataMessageSendPending = false; // Data sent. This setting can still be overriden by invalidateCommand
 			return true;
 		} else
@@ -1627,7 +1642,7 @@ void EnigmaIOTNodeClass::sleep () {
 	}
 }
 
-bool EnigmaIOTNodeClass::unencryptedDataMessage (const uint8_t* data, size_t len, bool controlMessage, nodePayloadEncoding_t payloadEncoding) {
+bool EnigmaIOTNodeClass::unencryptedDataMessage (const uint8_t* data, size_t len, dataMessageType_t dataMsgType, nodePayloadEncoding_t payloadEncoding) {
 	/*
 	* ------------------------------------------------------------------------
 	*| msgType (1) | NodeId (2) | Counter (2) | PayloadType (1) | Data (....) |
@@ -1649,7 +1664,7 @@ bool EnigmaIOTNodeClass::unencryptedDataMessage (const uint8_t* data, size_t len
 		return false;
 	}
 
-	if (controlMessage) {
+    if (dataMsgType != DATA_TYPE) {
 		return false; // Unencrypted control data not implemented
 	} else {
 		buf[0] = (uint8_t)UNENCRYPTED_NODE_DATA;
@@ -1688,7 +1703,7 @@ bool EnigmaIOTNodeClass::unencryptedDataMessage (const uint8_t* data, size_t len
 }
 
 
-bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool controlMessage, bool encrypt, nodePayloadEncoding_t payloadEncoding) {
+bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, dataMessageType_t dataMsgType, bool encrypt, nodePayloadEncoding_t payloadEncoding) {
 	/*
 	* ----------------------------------------------------------------------------------------
 	*| msgType (1) | IV (12) | length (2) | NodeId (2) | Counter (2) | Data (....) | tag (16) |
@@ -1696,7 +1711,7 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 	*/
 
 	if (!encrypt) {
-		return unencryptedDataMessage (data, len, controlMessage, payloadEncoding);
+        return unencryptedDataMessage (data, len, dataMsgType, payloadEncoding);
 	}
 
 	uint8_t buf[MAX_MESSAGE_LENGTH];
@@ -1710,7 +1725,7 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 	uint8_t counter_idx = nodeId_idx + sizeof (int16_t);
 	uint8_t encoding_idx;
 	uint8_t data_idx;
-	if (!controlMessage) {
+	if (dataMsgType != CONTROL_TYPE) {
 		encoding_idx = counter_idx + sizeof (int16_t);
 		data_idx = encoding_idx + sizeof (int8_t);
 	} else {
@@ -1723,8 +1738,10 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 		return false;
 	}
 
-	if (controlMessage) {
-		buf[0] = (uint8_t)CONTROL_DATA;
+    if (dataMsgType == CONTROL_TYPE) {
+        buf[0] = (uint8_t)CONTROL_DATA;
+    } else if (dataMsgType == HA_DISC_TYPE) {
+        buf[0] = (uint8_t)HA_DISCOVERY_MESSAGE;
 	} else {
 		buf[0] = (uint8_t)SENSOR_DATA;
 	}
@@ -1735,7 +1752,7 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 
 	memcpy (buf + nodeId_idx, &nodeId, sizeof (uint16_t));
 
-	if (!controlMessage) { // Control messages and data messages use different counters
+    if (dataMsgType != CONTROL_TYPE) { // Control messages and data messages use different counters
 		if (useCounter) {
 			counter = node.getLastMessageCounter () + 1;
 			node.setLastMessageCounter (counter);
@@ -1753,7 +1770,7 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 		}
 	}
 
-	if (!controlMessage) {
+    if (dataMsgType != CONTROL_TYPE) {
 		DEBUG_INFO ("Data message #%d", counter);
 	} else {
 		DEBUG_INFO ("Control message #%d", counter);
@@ -1794,8 +1811,10 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 
 	DEBUG_VERBOSE ("Encrypted data message: %s", printHexBuffer (buf, packet_length + TAG_LENGTH));
 
-	if (controlMessage) {
-		DEBUG_INFO (" -------> CONTROL MESSAGE");
+    if (dataMsgType == CONTROL_TYPE) {
+        DEBUG_INFO (" -------> CONTROL MESSAGE");
+    } else if (dataMsgType == HA_DISC_TYPE) {
+        DEBUG_INFO (" -------> HA DISCOVERY MESSAGE");
 	} else {
 		DEBUG_INFO (" -------> DATA");
 	}
@@ -1813,6 +1832,14 @@ bool EnigmaIOTNodeClass::dataMessage (const uint8_t* data, size_t len, bool cont
 	return (comm->send (rtcmem_data.gateway, buf, packet_length + TAG_LENGTH) == 0);
 }
 
+bool EnigmaIOTNodeClass::sendHADiscoveryMessage (const uint8_t* data, size_t len) {
+    if (!data || !len) {
+        DEBUG_WARN ("Empty buffer");
+        return false;
+    }
+    return sendData (data, len, HA_DISC_TYPE, true, MSG_PACK);
+}
+
 bool EnigmaIOTNodeClass::processGetSleepTimeCommand (const uint8_t* mac, const uint8_t* data, uint8_t len) {
 	uint8_t buffer[MAX_MESSAGE_LENGTH];
 	uint8_t bufLength;
@@ -1826,7 +1853,7 @@ bool EnigmaIOTNodeClass::processGetSleepTimeCommand (const uint8_t* mac, const u
 	memcpy (buffer + 1, &sleepTime, sizeof (sleepTime));
 	bufLength = 5;
 
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Sleep time is %d seconds", sleepTime);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return true;
@@ -1860,7 +1887,7 @@ bool EnigmaIOTNodeClass::processGetNameCommand (const uint8_t* mac, const uint8_
 	memcpy (buffer + 1 + ENIGMAIOT_ADDR_LEN, name, nameLen);
 	bufLength = 1 + ENIGMAIOT_ADDR_LEN + nameLen;
 
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Node name is %s", name ? name : "NULL name");
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return true;
@@ -1967,7 +1994,7 @@ bool EnigmaIOTNodeClass::processSetNameCommand (const uint8_t* mac, const uint8_
 	memcpy (buffer + 1 + ENIGMAIOT_ADDR_LEN, rtcmem_data.nodeName, nameLen);
 	bufLength = 1 + ENIGMAIOT_ADDR_LEN + nameLen;
 
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Node name is %s", rtcmem_data.nodeName);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return true;
@@ -2114,7 +2141,7 @@ bool EnigmaIOTNodeClass::processSetResetConfigCommand (const uint8_t* mac, const
 
 	bool result;
 
-	if ((result = sendData (buffer, bufLength, true))) {
+	if ((result = sendData (buffer, bufLength, CONTROL_TYPE))) {
 		DEBUG_DBG ("Reset Config about to be executed", sleepTime);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 	} else {
@@ -2123,8 +2150,9 @@ bool EnigmaIOTNodeClass::processSetResetConfigCommand (const uint8_t* mac, const
 
 	DEBUG_WARN ("Send restart command before deleting config");
 	restartReason = CONFIG_RESET;
-	sendRestart ();
-
+    sendRestart ();
+    
+    comm->enableTransmit (false);
 	clearRTC ();
 	clearFlash ();
 
@@ -2192,7 +2220,7 @@ bool EnigmaIOTNodeClass::processSetSleepTimeCommand (const uint8_t* mac, const u
 	memcpy (buffer + 1, &sleepTime, sizeof (sleepTime));
 	bufLength = 5;
 
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Sleep time is %d seconds", sleepTime);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return result;
@@ -2211,7 +2239,7 @@ bool EnigmaIOTNodeClass::processVersionCommand (const uint8_t* mac, const uint8_
 	memcpy (buffer + 1, ENIGMAIOT_PROT_VERS, sizeof (ENIGMAIOT_PROT_VERS));
 	bufLength = sizeof (ENIGMAIOT_PROT_VERS) + 1;
 	DEBUG_DBG ("Version command received");
-	if (sendData (buffer, bufLength, true)) {
+	if (sendData (buffer, bufLength, CONTROL_TYPE)) {
 		DEBUG_DBG ("Version is %s", ENIGMAIOT_PROT_VERS);
 		DEBUG_VERBOSE ("Data: %s", printHexBuffer (buffer, bufLength));
 		return true;
@@ -2254,7 +2282,7 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 				responseBuffer[0] = control_message_type::OTA_ANS;
 				responseBuffer[1] = ota_status::OTA_OUT_OF_SEQUENCE;
 				memcpy (responseBuffer + 2, (uint8_t*)&oldIdx, sizeof (oldIdx));
-				sendData (responseBuffer, 4, true);
+				sendData (responseBuffer, 4, CONTROL_TYPE);
 				DEBUG_ERROR ("%u OTA messages missing before %u", msgIdx - oldIdx - 1, msgIdx);
 				//otaRunning = false;
 				//otaError = true;
@@ -2288,7 +2316,7 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 		_md5.begin ();
 		responseBuffer[0] = control_message_type::OTA_ANS;
 		responseBuffer[1] = ota_status::OTA_STARTED;
-		if (sendData (responseBuffer, 2, true)) {
+		if (sendData (responseBuffer, 2, CONTROL_TYPE)) {
 			DEBUG_WARN ("OTA STARTED");
 			restart (IRRELEVANT, false); // Force unregistration after boot so that sleepy status is synchronized
 							 // on Gateway
@@ -2309,11 +2337,13 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 			static size_t totalBytes = 0;
 
 			_md5.add (dataPtr, dataLen);
+            comm->enableTransmit (false);
 			// Process OTA Update
 #if DEBUG_LEVEL >= INFO
 			size_t numBytes = 
 #endif
                 Update.write (dataPtr, dataLen);
+            comm->enableTransmit (true);
 			totalBytes += dataLen;
 			DEBUG_INFO ("%u bytes written. Total %u", numBytes, totalBytes);
 		} else {
@@ -2321,7 +2351,7 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 				otaError = true;
 				responseBuffer[0] = control_message_type::OTA_ANS;
 				responseBuffer[1] = ota_status::OTA_START_ERROR;
-				sendData (responseBuffer, 2, true);
+                sendData (responseBuffer, 2, CONTROL_TYPE);
 				DEBUG_ERROR ("OTA error. Message 0 not received");
 			}
 		}
@@ -2337,12 +2367,12 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 		if (!memcmp (md5calc, md5buffer, 32)) {
 			responseBuffer[0] = control_message_type::OTA_ANS;
 			responseBuffer[1] = ota_status::OTA_CHECK_OK;
-			sendData (responseBuffer, 2, true);
+            sendData (responseBuffer, 2, CONTROL_TYPE);
 			DEBUG_WARN ("OTA MD5 check OK");
 		} else {
 			responseBuffer[0] = control_message_type::OTA_ANS;
 			responseBuffer[1] = ota_status::OTA_CHECK_FAIL;
-			sendData (responseBuffer, 2, true);
+            sendData (responseBuffer, 2, CONTROL_TYPE);
 			DEBUG_ERROR ("OTA MD5 check failed");
 		}
 		Serial.print ('.');
@@ -2355,7 +2385,7 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 		if (Update.end ()) {
 			responseBuffer[0] = control_message_type::OTA_ANS;
 			responseBuffer[1] = ota_status::OTA_FINISHED;
-			sendData (responseBuffer, 2, true);
+            sendData (responseBuffer, 2, CONTROL_TYPE);
 			//uint8_t otaErrorCode = Update.getError ();
 			DEBUG_WARN ("OTA Finished OK");
             DEBUG_WARN ("OTA eror code: %d", Update.getError ());
@@ -2369,7 +2399,7 @@ bool EnigmaIOTNodeClass::processOTACommand (const uint8_t* mac, const uint8_t* d
 		} else {
 			responseBuffer[0] = control_message_type::OTA_ANS;
 			responseBuffer[1] = ota_status::OTA_CHECK_FAIL;
-			sendData (responseBuffer, 2, true);
+            sendData (responseBuffer, 2, CONTROL_TYPE);
 			//uint8_t otaErrorCode = Update.getError ();
 			Update.printError (otaErrorStr);
 			otaErrorStr.trim (); // remove line ending
@@ -2652,7 +2682,7 @@ void EnigmaIOTNodeClass::manageMessage (const uint8_t* mac, const uint8_t* buf, 
 						if (dataMessageSendPending && dataMessageSentLength > 0) {
 							DEBUG_INFO ("Data pending to be sent. Length: %u", dataMessageSentLength);
 							DEBUG_VERBOSE ("Data sent: %s", printHexBuffer (dataMessageSent, dataMessageSentLength));
-							dataMessage ((uint8_t*)dataMessageSent, dataMessageSentLength, false, dataMessageEncrypt, dataMessageSendEncoding);
+							dataMessage ((uint8_t*)dataMessageSent, dataMessageSentLength, DATA_TYPE, dataMessageEncrypt, dataMessageSendEncoding);
 							//dataMessageSentLength = 0;
 							dataMessageSendPending = false;
 

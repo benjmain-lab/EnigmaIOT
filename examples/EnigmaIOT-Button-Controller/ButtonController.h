@@ -14,6 +14,7 @@
 #endif
 
 #include <EnigmaIOTjsonController.h>
+#include "haTrigger.h"
 
 // --------------------------------------------------
 // You may define data structures and constants here
@@ -57,9 +58,7 @@ public:
 	 */
     bool loadConfig () override;
 
-    void connectInform () override {
-		sendStartAnouncement ();
-	}
+    void connectInform ();
 
 protected:
 	/**
@@ -83,6 +82,8 @@ protected:
 
         return sendJson (json);
     }
+
+    void buildHADiscovery ();
 
 	// ------------------------------------------------------------
 	// You may add additional method definitions that you need here

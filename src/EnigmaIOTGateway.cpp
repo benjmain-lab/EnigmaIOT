@@ -23,6 +23,15 @@
 #include <cstdint>
 #include <regex>
 
+#if SUPPORT_HA_DISCOVERY
+#include "haEntity.h"
+#include "haBinarySensor.h"
+#include "haCover.h"
+#include "haSensor.h"
+#include "haSwitch.h"
+#include "haTrigger.h"
+#endif // SUPPORT_HA_DISCOVERY
+
 const char CONFIG_FILE[] = "/config.json";
 
 bool shouldSave = false;
@@ -859,7 +868,7 @@ msg_queue_item_t* EnigmaIOTGatewayClass::getInputMsgQueue (msg_queue_item_t* buf
 #endif
 	message = input_queue->front ();
 	if (message) {
-		DEBUG_DBG ("EnigmaIOT message got from queue. Size: %d", input_queue->size ());
+		// DEBUG_DBG ("EnigmaIOT message got from queue. Size: %d", input_queue->size ());
 		memcpy (buffer->data, message->data, message->len);
 		memcpy (buffer->addr, message->addr, ENIGMAIOT_ADDR_LEN);
 		buffer->len = message->len;
@@ -1057,42 +1066,54 @@ void EnigmaIOTGatewayClass::manageMessage (const uint8_t* mac, uint8_t* buf, uin
 		}
 		break;
 	case SENSOR_DATA:
-	case UNENCRYPTED_NODE_DATA:
-		bool encrypted;
-		if (buf[0] == SENSOR_DATA) {
-			DEBUG_INFO (" <------- ENCRYPTED DATA");
+    case UNENCRYPTED_NODE_DATA:
+#if SUPPORT_HA_DISCOVERY
+    case HA_DISCOVERY_MESSAGE:
+#endif // SUPPORT_HA_DISCOVERY
+    {
+        bool encrypted = false;
+        if (buf[0] == SENSOR_DATA) {
+            DEBUG_INFO (" <------- ENCRYPTED DATA");
+            encrypted = true;
+        }
+#if SUPPORT_HA_DISCOVERY
+        else if (buf[0] == HA_DISCOVERY_MESSAGE) {
+            DEBUG_INFO (" <------- HA_DISCOVERY_MESSAGE");
 			encrypted = true;
-		} else {
-			DEBUG_INFO (" <------- UNENCRYPTED DATA");
-			encrypted = false;
-		}
-		//if (!OTAongoing) {
-		if (node->getStatus () == REGISTERED) {
-			float packetsHour = (float)1 / ((millis () - node->getLastMessageTime ()) / (float)3600000);
-			node->updatePacketsRate (packetsHour);
-			if (processDataMessage (mac, buf, count, node, encrypted)) {
-				node->setLastMessageTime ();
-				DEBUG_INFO ("Data OK");
-				DEBUG_VERBOSE ("Key valid from %lu ms", millis () - node->getKeyValidFrom ());
-				if (MAX_KEY_VALIDITY > 0) {
-					if (millis () - node->getKeyValidFrom () > MAX_KEY_VALIDITY) {
-						invalidateKey (node, KEY_EXPIRED);
-					}
-				}
-			} else {
-				if (DISCONNECT_ON_DATA_ERROR) {
-					invalidateKey (node, WRONG_DATA);
-				}
-				DEBUG_WARN ("Data not OK");
-			}
-		} else {
-			invalidateKey (node, UNREGISTERED_NODE);
-			node->reset ();
-		}
-		//} else {
-		//	DEBUG_WARN ("Data ignored. OTA ongoing");
-		//}
-		break;
+        }
+#endif // SUPPORT_HA_DISCOVERY 
+        else {
+            DEBUG_INFO (" <------- UNENCRYPTED DATA");
+            encrypted = false;
+        }
+        //if (!OTAongoing) {
+        if (node->getStatus () == REGISTERED) {
+            float packetsHour = (float)1 / ((millis () - node->getLastMessageTime ()) / (float)3600000);
+            node->updatePacketsRate (packetsHour);
+            if (processDataMessage (mac, buf, count, node, encrypted)) {
+                node->setLastMessageTime ();
+                DEBUG_INFO ("Data OK");
+                DEBUG_VERBOSE ("Key valid from %lu ms", millis () - node->getKeyValidFrom ());
+                if (MAX_KEY_VALIDITY > 0) {
+                    if (millis () - node->getKeyValidFrom () > MAX_KEY_VALIDITY) {
+                        invalidateKey (node, KEY_EXPIRED);
+                    }
+                }
+            } else {
+                if (DISCONNECT_ON_DATA_ERROR) {
+                    invalidateKey (node, WRONG_DATA);
+                }
+                DEBUG_WARN ("Data not OK");
+            }
+        } else {
+            invalidateKey (node, UNREGISTERED_NODE);
+            node->reset ();
+        }
+        //} else {
+        //	DEBUG_WARN ("Data ignored. OTA ongoing");
+        //}
+        break;
+    }
 	case CLOCK_REQUEST:
 		DEBUG_INFO (" <------- CLOCK REQUEST");
 		if (node->getStatus () == REGISTERED) {
@@ -1263,7 +1284,7 @@ bool EnigmaIOTGatewayClass::processNodeNameSet (const uint8_t mac[ENIGMAIOT_ADDR
 		error = nodelist.checkNodeName (nodeName, mac);
 	}
 
-	nodeNameSetRespose (node, error);
+	//nodeNameSetRespose (node, error);
 
 	if (error) {
 		return false;
@@ -1459,11 +1480,17 @@ bool EnigmaIOTGatewayClass::processDataMessage (const uint8_t mac[ENIGMAIOT_ADDR
 	}
 
 	char* nodeName = node->getNodeName ();
-
-	if (notifyData) {
+#if SUPPORT_HA_DISCOVERY
+    if (buf[0] == HA_DISCOVERY_MESSAGE) {
+        sendHADiscoveryJSON (const_cast<uint8_t*>(mac), &(buf[data_idx]), tag_idx - data_idx, gwConfig.networkName, nodeName ? nodeName : NULL);
+    } else
+#endif // SUPPORT_HA_DISCOVERY
+        if (buf[0] == SENSOR_DATA && notifyData) {
 		//DEBUG_WARN ("Notify data %d", input_queue->size());
 		notifyData (const_cast<uint8_t*>(mac), &(buf[data_idx]), tag_idx - data_idx, lostMessages, false, (gatewayPayloadEncoding_t)(buf[encoding_idx]), nodeName ? nodeName : NULL);
-	}
+        } else {
+            DEBUG_WARN ("Wrong message type. Possible memory corruption");
+    }
 
 	if (node->getSleepy ()) {
 		if (node->qMessagePending) {
@@ -2005,6 +2032,68 @@ bool EnigmaIOTGatewayClass::serverHello (const uint8_t* key, Node* node) {
 		return false;
 	}
 }
+
+#if SUPPORT_HA_DISCOVERY
+bool EnigmaIOTGatewayClass::sendHADiscoveryJSON (uint8_t* address, uint8_t* data, size_t len, const char* networkName, const char* nodeName) {
+    DynamicJsonDocument inputJSON (1024);
+    const int jsonBufferSize = 1024;
+    char jsonStringBuffer[jsonBufferSize];
+    haDeviceType_t deviceType;
+
+    DeserializationError result = deserializeMsgPack (inputJSON, data, len);
+
+    if (result != DeserializationError::Ok) {
+        DEBUG_WARN ("Error decoding HA discovery message: %s", result.c_str ());
+        return false;
+    }
+    
+    DEBUG_DBG ("Entity name: %s", nodeName ? nodeName : mac2str (address));
+
+    if (inputJSON.containsKey (ha_device_type)) {
+        deviceType = inputJSON[ha_device_type];
+        DEBUG_DBG ("Device Type: %d", deviceType);
+    } else {
+        DEBUG_WARN ("Device type error");
+        return false;
+    }
+
+    String topic = HAEntity::getDiscoveryTopic (HA_DISCOVERY_PREFIX, nodeName ? nodeName : mac2str(address), deviceType, inputJSON.containsKey (ha_name_sufix) ? inputJSON[ha_name_sufix] : (const char *) NULL);
+
+    size_t jsonStrLen;
+    
+    switch (deviceType) {
+    case BINARY_SENSOR:
+        jsonStrLen = HABinarySensor::getDiscoveryJson (jsonStringBuffer, jsonBufferSize, nodeName ? nodeName : mac2str (address), networkName, &inputJSON);
+        break;
+    case SENSOR:
+        jsonStrLen = HASensor::getDiscoveryJson (jsonStringBuffer, jsonBufferSize, nodeName ? nodeName : mac2str (address), networkName, &inputJSON);
+        break;
+    case COVER:
+        jsonStrLen = HACover::getDiscoveryJson (jsonStringBuffer, jsonBufferSize, nodeName ? nodeName : mac2str (address), networkName, &inputJSON);
+        break;
+    case SWITCH:
+        jsonStrLen = HASwitch::getDiscoveryJson (jsonStringBuffer, jsonBufferSize, nodeName ? nodeName : mac2str (address), networkName, &inputJSON);
+        break;
+    case DEVICE_TRIGGER:
+        jsonStrLen = HATrigger::getDiscoveryJson (jsonStringBuffer, jsonBufferSize, nodeName ? nodeName : mac2str (address), networkName, &inputJSON);
+        break;
+    default:
+        jsonStringBuffer[0] = 0;
+        jsonStrLen = 0;
+        DEBUG_WARN ("Device is not supported for HomeAssistant discovery: %d", deviceType);
+        return false;
+        break;
+    }
+
+    DEBUG_INFO ("%s : %s", topic.c_str (), jsonStringBuffer);
+    if (notifyHADiscovery) {
+        notifyHADiscovery (topic.c_str (), jsonStringBuffer, jsonStrLen);
+    }
+    
+    return true;
+    
+}
+#endif // SUPPORT_HA_DISCOVERY
 
 EnigmaIOTGatewayClass EnigmaIOTGateway;
 
